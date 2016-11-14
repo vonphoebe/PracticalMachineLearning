@@ -1,0 +1,155 @@
+---
+title: "Practical Machine Learning Project"
+author: "Lucy Ji"
+date: "November 11, 2016"
+output: html_document 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Background
+Using devices such as Fitbit it is now possible to collect a large amount of data about personal activity. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har>
+   
+##Data
+The training data for this project are available here:
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+The test data are available here:
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>
+
+
+
+```{r ml1}
+library(caret)
+```
+
+### Import data into R 
+Import data into R after downloading the data 
+```{r ml2}
+setwd("C:/statistics/machine learning/PR_project")
+```
+
+Before importing data into R, check the CSV file to get familiar with the data. Then import into R and check variables with missing values or outliers.
+```{r ml3}
+activity <- read.csv("pml-training.csv")
+sum(activity =='#DIV/0!', na.rm=TRUE)  
+```
+   Re-import the training set into R and get rid of missing values/outliers at the same time.
+```{r ml4}
+pmltraining <- read.csv('pml-training.csv', na.strings=c('#DIV/0!', '', 'NA')) #19622 obs
+sum( pmltraining =='#DIV/0!', na.rm=TRUE)
+```
+
+   Import the testing data into R following the same method of training data 
+```{r ml5}
+pmltesting <- read.csv('pml-testing.csv', na.strings=c('#DIV/0!', '', 'NA'))
+#20 obs
+```
+
+   Set a seed to insure reproducability.
+```{r ml55} 
+set.seed(3433)
+```
+
+###Partitioning and Preprocessing 
+####Partitioning
+   The training data will be partitioned to sub training and sub testing dataset with a 7.5 to 2.5 ratio. So far, training and testing sets each has 160 variables, we will use some statistics methods to drop variables with a lot of missing observations, and to drop variables related to data identification(id, timestamps, user name, etc). 
+
+
+```{r ml6}   
+inTrain = createDataPartition(pmltraining$classe, p = 3/4)[[1]]
+training = pmltraining[ inTrain,] #14718, 160 var 
+testing = pmltraining[-inTrain,] #4904 
+#get rid of variables with 20% or more missing observations 
+my_training <- training[ , colMeans(is.na(training)) <= 0.2 ] #60 var
+#Variables related with data identification are not suitable to be used in prediction and are removed
+my_training <- my_training[, -(1:6)] #54 var
+
+#Get rid of variables with 0 variance or near 0 variance predictors 
+x <- nearZeroVar(my_training, saveMetrics = TRUE) 
+#check zeroVar and nzv       
+x[x[,"zeroVar"] + x[,"nzv"] > 0, ] 
+#No variables will be removed for this step. 
+```
+
+   Do the same procedure for sub testing data. 
+```{r ml 66}   
+my_testing <-testing[, colMeans(is.na(testing)) <= 0.2]
+my_testing <- my_testing[, -(1:6)]
+y <- nearZeroVar(my_testing, saveMetrics = TRUE) 
+y[y[,"zeroVar"] + y[,"nzv"] > 0, ] 
+```
+
+   Do the same procedure for the final testing data 
+```{r ml 666}
+pml_testingc <- pmltesting[, colMeans(is.na(pmltesting)) <= 0.2]
+pml_testingc <- pml_testingc[, -(1:6)]
+```
+
+   Check whether training and testing data got the same variable names.
+```{r ml 7}   
+all.equal(colnames(my_training)[1:length(colnames(my_training))], 
+                colnames(pml_testingc)[1:length(colnames(pml_testingc))])
+which(colnames(my_training)[1:length(colnames(my_training))]!=colnames(pml_testingc)[1:length(colnames(pml_testingc))]) 
+```
+   *Problem_id* in *pml_testingc* is different from variables in *my_training*, when check the data, we see no classe variables in final testing set. 
+
+
+####Preprocessing with cross validation using Principal Component Analysis(PCA)
+   Correlation analysis:
+   53 predictors are included in the model to predict the outcome "classe". Before build the model, we should check whether the predictors are correlated. 
+   
+   ####Preprocessing   
+```{r ml 8}   
+corr <- caret::findCorrelation(cor(my_training[, -54]), cutoff=0.8)
+names(my_training)[corr] 
+```
+   13 variables are highly correlated. 
+      
+   PCA is a way to deal with highly correlated variables. Train control is created and use the Principal Component Analysis(PCA) method. 
+```{r ml 9}
+tr <- trainControl(method = "cv", number = 5,verboseIter = FALSE, preProcOptions="pca")
+```
+
+###Model building 
+#### Build a Random Forest model
+```{r ml 10}
+rf <- train(classe ~ ., data = my_training, method = "rf", trControl= tr)
+rf$finalModel
+#varImp(rf$finalModel) # show variable importance
+```
+
+   Train random forest model on sub testing data
+```{r ml 101}  
+predictrf_mytest <- predict(rf, my_testing)
+confusionMatrix(my_testing$classe, predictrf_mytest)$overall['Accuracy']
+outsampleerror_rf <- 1-confusionMatrix(my_testing$classe, predictrf_mytest)$overall['Accuracy']
+outsampleerror_rf <- 1-0.9971452 
+outsampleerror_rf 
+```
+
+####Build a boosting with trees model 
+```{r ml 102,  results="hide"}
+gbm <- train(classe ~ ., data=my_training, method="gbm",trControl= tr)
+predictgbm_mytest <- predict(gbm, my_testing)
+confusionMatrix(my_testing$classe, predictgbm_mytest)$overall['Accuracy']
+outsampleerror_gbm <- 1-confusionMatrix(my_testing$classe, predictgbm_mytest)$overall['Accuracy']
+outsampleerror_gbm <- 1-0.9887847
+outsampleerror_gbm
+```
+
+
+####Out of sample error 
+   The out of sample error by using 2 different models are, 0.0029 in random forest model, and 0.0112 in boosting with trees model. With high accuracy and low out of sample error, we will choose random forest model as my final model. 
+   
+####Use prediction model to predict 20 different test cases      
+   Train random forest model on real testing data 
+```{r ml 103} 
+predictrf <- predict(rf, pml_testingc)
+print(predictrf)
+```
+
+###Conclusion
+   2 prediction models, random forest and boosting with trees have been used to predict how well a person is performing a particular exercise using the information collected by devices. Compared with boosting with trees, random forest model would give us more accurate prediction using the dataset.  
+ 
